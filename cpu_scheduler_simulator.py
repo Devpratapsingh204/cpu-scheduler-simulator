@@ -998,7 +998,280 @@ class CPUSchedulerApp(tk.Tk):
             tk.Label(card, text=value, font=("Segoe UI", 16, "bold"),
                      bg=COLORS["card"], fg=color).pack(pady=(4, 0))
 
-    
+    # ══════════════════════════════════════════════════════════════
+    #  COMPARE TAB
+    # ══════════════════════════════════════════════════════════════
+
+    def _build_compare_tab(self):
+        self.compare_inner = tk.Frame(self.tab_compare, bg=COLORS["bg"])
+        self.compare_inner.pack(fill="both", expand=True)
+        tk.Label(self.compare_inner,
+                 text='Click "Compare All" in the toolbar to run all algorithms.',
+                 font=FONT_MAIN, bg=COLORS["bg"], fg=COLORS["subtext"]).pack(expand=True)
+
+    def _draw_comparison(self, results):
+        for w in self.compare_inner.winfo_children():
+            w.destroy()
+        labels = [r["algorithm"] for r in results]
+        awt    = [r["summary"]["avg_waiting_time"]    for r in results]
+        att    = [r["summary"]["avg_turnaround_time"] for r in results]
+        cpu    = [r["summary"]["cpu_utilization"]     for r in results]
+
+        fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
+        fig.patch.set_facecolor(COLORS["bg"])
+        short = [l.replace("Non-Preemptive", "NP").replace("Preemptive", "P")
+                  .replace("Round Robin", "RR").replace("Priority", "Pri")
+                 for l in labels]
+
+        for ax, values, title, color in [
+            (axes[0], awt, "Avg Waiting Time (units)",    COLORS["warning"]),
+            (axes[1], att, "Avg Turnaround Time (units)", COLORS["accent"]),
+            (axes[2], cpu, "CPU Utilization (%)",         COLORS["success"]),
+        ]:
+            ax.set_facecolor(COLORS["card"])
+            bars = ax.bar(short, values, color=color, alpha=0.85,
+                          edgecolor=COLORS["border"])
+            for bar, val in zip(bars, values):
+                ax.text(bar.get_x() + bar.get_width() / 2,
+                        bar.get_height() + max(values) * 0.02, str(val),
+                        ha="center", va="bottom", fontsize=8,
+                        color=COLORS["text"], fontweight="bold")
+            ax.set_title(title, color=COLORS["text"], fontsize=9, fontweight="bold")
+            ax.tick_params(axis="x", colors=COLORS["subtext"], labelsize=7, rotation=15)
+            ax.tick_params(axis="y", colors=COLORS["subtext"], labelsize=8)
+            for spine in ax.spines.values():
+                spine.set_edgecolor(COLORS["border"])
+            ax.set_ylim(0, max(values) * 1.2 if max(values) > 0 else 1)
+
+        best_idx = awt.index(min(awt))
+        list(axes[0].get_children())[best_idx].set_edgecolor(COLORS["success"])
+        list(axes[0].get_children())[best_idx].set_linewidth(2.5)
+
+        tk.Label(self.compare_inner, text="Algorithm Comparison — Same Workload",
+                 font=FONT_TITLE, bg=COLORS["bg"], fg=COLORS["accent"]).pack(pady=(10, 0))
+        tk.Label(self.compare_inner,
+                 text=f"Best: {results[best_idx]['algorithm']}  (lowest avg waiting time)",
+                 font=FONT_BOLD, bg=COLORS["bg"], fg=COLORS["success"]).pack(pady=(2, 6))
+
+        fig.tight_layout(pad=2)
+        canvas = FigureCanvasTkAgg(fig, master=self.compare_inner)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=(0, 10))
+        plt.close(fig)
+
+        cols = ("Algorithm", "Avg WT", "Avg TAT", "Avg RT", "CPU Util%", "Throughput")
+        tree = self._make_treeview(self.compare_inner, cols, height=len(results))
+        for i, r in enumerate(results):
+            s   = r["summary"]
+            tag = "even" if i % 2 == 0 else "odd"
+            tree.insert("", "end", tag=tag, values=(
+                r["algorithm"], s["avg_waiting_time"],
+                s["avg_turnaround_time"], s["avg_response_time"],
+                f"{s['cpu_utilization']}%", s["throughput"],
+            ))
+
+    # ══════════════════════════════════════════════════════════════
+    #  PROCESS ROW MANAGEMENT
+    # ══════════════════════════════════════════════════════════════
+
+    def _add_row(self, pid="", at="0", bt="", pri="1"):
+        self.row_count += 1
+        default_pid = pid or f"P{self.row_count}"
+        pid_v = tk.StringVar(value=default_pid)
+        at_v  = tk.StringVar(value=at)
+        bt_v  = tk.StringVar(value=bt)
+        pri_v = tk.StringVar(value=pri)
+        row   = tk.Frame(self.row_frame,
+                         bg=COLORS["row_even"] if self.row_count % 2 == 0
+                         else COLORS["row_odd"])
+        row.pack(fill="x", pady=1)
+        for var, w, fg in [(pid_v,6,COLORS["accent"]),(at_v,7,COLORS["text"]),
+                            (bt_v,6,COLORS["text"]),(pri_v,8,COLORS["warning"])]:
+            tk.Entry(row, textvariable=var, width=w, font=FONT_MONO,
+                     bg=COLORS["card"], fg=fg, insertbackground=fg,
+                     relief="flat", justify="center").pack(side="left", padx=3, pady=4)
+        tk.Button(row, text="x", font=("Segoe UI", 8),
+                  bg=COLORS["danger"], fg="white", relief="flat", padx=4,
+                  cursor="hand2",
+                  command=lambda r=row, rv=(pid_v,at_v,bt_v,pri_v):
+                      self._delete_row(r, rv)).pack(side="left", padx=2)
+        self.process_rows.append((pid_v, at_v, bt_v, pri_v))
+        self._scroll_canvas.update_idletasks()
+        self._scroll_canvas.yview_moveto(1)
+
+    def _delete_row(self, rw, rv):
+        if rv in self.process_rows:
+            self.process_rows.remove(rv)
+        rw.destroy()
+
+    def _clear_rows(self):
+        for c in self.row_frame.winfo_children():
+            c.destroy()
+        self.process_rows.clear()
+        self.row_count = 0
+
+    def _load_sample_data(self):
+        for args in [("P1","0","8","3"),("P2","1","4","1"),
+                     ("P3","2","9","4"),("P4","3","5","2")]:
+            self._add_row(*args)
+
+    # ══════════════════════════════════════════════════════════════
+    #  HELPERS
+    # ══════════════════════════════════════════════════════════════
+
+    def _section(self, parent, text):
+        tk.Label(parent, text=text, font=FONT_H2,
+                 bg=COLORS["sidebar"], fg=COLORS["accent"]).pack(
+                     anchor="w", padx=14, pady=(12, 4))
+
+    def _divider(self, parent):
+        tk.Frame(parent, bg=COLORS["border"], height=1).pack(
+            fill="x", padx=10, pady=6)
+
+    def _make_treeview(self, parent, cols, height=8):
+        style = ttk.Style()
+        style.configure("Dark.Treeview", background=COLORS["card"],
+                        foreground=COLORS["text"], fieldbackground=COLORS["card"],
+                        rowheight=26, font=FONT_MONO)
+        style.configure("Dark.Treeview.Heading", background=COLORS["header_bg"],
+                        foreground=COLORS["subtext"], font=FONT_BOLD, relief="flat")
+        style.map("Dark.Treeview",
+                  background=[("selected", COLORS["accent"])],
+                  foreground=[("selected", "white")])
+        frame = tk.Frame(parent, bg=COLORS["bg"])
+        frame.pack(fill="both", expand=True, padx=10, pady=10)
+        vsb  = ttk.Scrollbar(frame, orient="vertical")
+        hsb  = ttk.Scrollbar(frame, orient="horizontal")
+        tree = ttk.Treeview(frame, columns=cols, show="headings",
+                            style="Dark.Treeview", height=height,
+                            yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        vsb.config(command=tree.yview)
+        hsb.config(command=tree.xview)
+        vsb.pack(side="right", fill="y")
+        hsb.pack(side="bottom", fill="x")
+        tree.pack(fill="both", expand=True)
+        for col in cols:
+            tree.heading(col, text=col)
+            tree.column(col, anchor="center", width=max(80, len(col) * 9))
+        tree.tag_configure("even", background=COLORS["row_even"])
+        tree.tag_configure("odd",  background=COLORS["row_odd"])
+        return tree
+
+    def _on_algo_change(self):
+        state = "normal" if self.algo_var.get() == "RR" else "disabled"
+        self.quantum_spin.config(state=state)
+
+    # ══════════════════════════════════════════════════════════════
+    #  CORE ACTIONS
+    # ══════════════════════════════════════════════════════════════
+
+    def _collect_processes(self):
+        processes = []
+        for pid_v, at_v, bt_v, pri_v in self.process_rows:
+            pid = pid_v.get().strip()
+            if not pid:
+                continue
+            try:
+                processes.append(Process(pid, int(at_v.get()),
+                                         int(bt_v.get()), int(pri_v.get())))
+            except ValueError:
+                messagebox.showerror("Invalid Input",
+                    f"Process '{pid}': All fields must be integers.")
+                return None
+        return processes
+
+    def _run_simulation(self):
+        processes = self._collect_processes()
+        if processes is None:
+            return
+        err = validate_processes(processes)
+        if err:
+            messagebox.showerror("Validation Error", err)
+            return
+
+        algo = self.algo_var.get()
+        try:
+            if   algo == "FCFS"  : result = fcfs(processes)
+            elif algo == "SJF_NP": result = sjf(processes, preemptive=False)
+            elif algo == "SJF_P" : result = sjf(processes, preemptive=True)
+            elif algo == "RR"    : result = round_robin(processes, self.quantum_var.get())
+            elif algo == "PRI_NP": result = priority_scheduling(processes, preemptive=False)
+            elif algo == "PRI_P" : result = priority_scheduling(processes, preemptive=True)
+            else:
+                messagebox.showerror("Error", "Unknown algorithm."); return
+        except Exception as ex:
+            messagebox.showerror("Simulation Error", str(ex)); return
+
+        self.last_result = result
+        self.processes   = processes
+
+        if not MATPLOTLIB_OK:
+            messagebox.showwarning("matplotlib missing",
+                "Install it with:  pip install matplotlib")
+        else:
+            snapshots = build_tick_snapshots(processes, result["timeline"])
+            self.engine.load(snapshots)
+            self.scrubber.config(from_=0, to=max(len(snapshots) - 1, 1))
+            self.scrubber_var.set(0)
+            self.tick_lbl.config(text="t = 0")
+            self._setup_gantt_figure(result["timeline"])
+            if snapshots:
+                self._on_tick(0)
+
+        self._update_metrics(result["metrics"])
+        self._update_summary(result)
+
+    def _compare_all(self):
+        processes = self._collect_processes()
+        if processes is None:
+            return
+        err = validate_processes(processes)
+        if err:
+            messagebox.showerror("Validation Error", err); return
+        if not MATPLOTLIB_OK:
+            messagebox.showwarning("matplotlib missing",
+                "pip install matplotlib"); return
+        q = self.quantum_var.get()
+        results = [
+            fcfs(processes),
+            sjf(processes, preemptive=False),
+            sjf(processes, preemptive=True),
+            round_robin(processes, q),
+            priority_scheduling(processes, preemptive=False),
+            priority_scheduling(processes, preemptive=True),
+        ]
+        self._draw_comparison(results)
+
+    def _export_csv(self):
+        if not self.last_result:
+            messagebox.showinfo("No Data", "Run a simulation first.")
+            return
+        path = filedialog.asksaveasfilename(
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            title="Save Metrics as CSV")
+        if not path:
+            return
+        metrics = self.last_result["metrics"]
+        summary = self.last_result["summary"]
+        with open(path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["CPU Scheduler Simulator — Export"])
+            w.writerow(["Algorithm", self.last_result["algorithm"]])
+            w.writerow([])
+            w.writerow(["PID", "Arrival", "Burst", "Priority",
+                         "Completion", "Turnaround", "Waiting", "Response"])
+            for m in metrics:
+                w.writerow([m["pid"], m["arrival_time"], m["burst_time"],
+                             m["priority"], m["completion_time"],
+                             m["turnaround_time"], m["waiting_time"],
+                             m["response_time"]])
+            w.writerow([])
+            w.writerow(["Summary"])
+            for k, v in summary.items():
+                w.writerow([k.replace("_", " ").title(), v])
+        messagebox.showinfo("Exported", f"Saved to:\n{path}")
+
 
 # ══════════════════════════════════════════════════════════════════
 #  ENTRY POINT
