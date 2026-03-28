@@ -262,3 +262,55 @@ def priority_scheduling(processes, preemptive=False):
             "metrics": m, "summary": compute_summary(m, timeline)}
 
 
+def validate_processes(processes):
+    if not processes:
+        return "Please add at least one process."
+    pids = [p.pid for p in processes]
+    if len(pids) != len(set(pids)):
+        return "Duplicate Process IDs found."
+    for p in processes:
+        if p.burst_time  <= 0: return f"{p.pid}: Burst time must be > 0."
+        if p.arrival_time < 0: return f"{p.pid}: Arrival time cannot be negative."
+        if p.priority    < 1:  return f"{p.pid}: Priority must be >= 1."
+    return None
+
+
+# ══════════════════════════════════════════════════════════════════
+#  STYLE CONSTANTS
+# ══════════════════════════════════════════════════════════════════
+
+COLORS = {
+    "bg"        : "#0f1117",
+    "sidebar"   : "#1a1d27",
+    "card"      : "#1e2130",
+    "accent"    : "#4f8ef7",
+    "accent2"   : "#7c5cbf",
+    "success"   : "#3ecf8e",
+    "warning"   : "#f5a623",
+    "danger"    : "#e05c5c",
+    "text"      : "#e8eaf0",
+    "subtext"   : "#7b8199",
+    "border"    : "#2d3148",
+    "idle"      : "#3a3f55",
+    "row_even"  : "#1e2130",
+    "row_odd"   : "#242840",
+    "header_bg" : "#151825",
+    "rq_run"    : "#3ecf8e",
+    "rq_wait"   : "#4f8ef7",
+    "rq_done"   : "#4a5068",
+}
+
+PROCESS_COLORS = [
+    "#4f8ef7","#3ecf8e","#f5a623","#e05c5c","#7c5cbf",
+    "#00bcd4","#ff7043","#ab47bc","#26a69a","#ec407a",
+    "#66bb6a","#ffa726","#42a5f5","#ef5350","#8d6e63",
+]
+
+FONT_MAIN  = ("Segoe UI", 10)
+FONT_BOLD  = ("Segoe UI", 10, "bold")
+FONT_TITLE = ("Segoe UI", 14, "bold")
+FONT_H2    = ("Segoe UI", 11, "bold")
+FONT_MONO  = ("Consolas", 9)
+FONT_SMALL = ("Consolas", 8)
+
+
