@@ -315,6 +315,75 @@ FONT_SMALL = ("Consolas", 8)
 
 
 # ══════════════════════════════════════════════════════════════════
+#  ANIMATION ENGINE
+# ══════════════════════════════════════════════════════════════════
+
+class AnimationEngine:
+    """Controls tick-by-tick playback state."""
+    SPEEDS = {"0.5x": 1200, "1x": 600, "1.5x": 350, "2x": 180, "3x": 80}
+
+    def __init__(self, on_tick, on_finish):
+        self.on_tick     = on_tick
+        self.on_finish   = on_finish
+        self.snapshots   = []
+        self.total_ticks = 0
+        self.current     = 0
+        self.playing     = False
+        self.speed_key   = "1x"
+        self._job        = None
+        self._root       = None
+
+    def load(self, snapshots):
+        self.stop()
+        self.snapshots   = snapshots
+        self.total_ticks = len(snapshots)
+        self.current     = 0
+
+    def play(self, root):
+        if self.playing or self.current >= self.total_ticks:
+            return
+        self.playing = True
+        self._root   = root
+        self._advance(root)
+
+    def pause(self):
+        self.playing = False
+        if self._job and self._root:
+            self._root.after_cancel(self._job)
+            self._job = None
+
+    def stop(self):
+        self.pause()
+        self.current = 0
+
+    def step_forward(self):
+        if self.current < self.total_ticks - 1:
+            self.current += 1
+            self.on_tick(self.current)
+
+    def step_backward(self):
+        if self.current > 0:
+            self.current -= 1
+            self.on_tick(self.current)
+
+    def jump_to(self, tick):
+        self.current = max(0, min(int(tick), self.total_ticks - 1))
+        self.on_tick(self.current)
+
+    def _advance(self, root):
+        if not self.playing:
+            return
+        if self.current >= self.total_ticks:
+            self.playing = False
+            self.on_finish()
+            return
+        self.on_tick(self.current)
+        self.current += 1
+        delay      = self.SPEEDS.get(self.speed_key, 600)
+        self._job  = root.after(delay, lambda: self._advance(root))
+
+
+# ══════════════════════════════════════════════════════════════════
 #  MAIN APPLICATION
 # ══════════════════════════════════════════════════════════════════
 
@@ -491,7 +560,389 @@ class CPUSchedulerApp(tk.Tk):
         self._build_summary_tab()
         self._build_compare_tab()
 
-    
+    # ══════════════════════════════════════════════════════════════
+    #  GANTT + ANIMATION TAB
+    # ══════════════════════════════════════════════════════════════
+
+    def _build_gantt_tab(self):
+        # ── Top row: chart area + ready queue panel ───────────────
+        top = tk.Frame(self.tab_gantt, bg=COLORS["bg"])
+        top.pack(fill="both", expand=True)
+        top.columnconfigure(0, weight=1)
+        top.columnconfigure(1, minsize=230)
+        top.rowconfigure(0, weight=1)
+
+        # Left — Gantt canvas
+        self.gantt_area = tk.Frame(top, bg=COLORS["bg"])
+        self.gantt_area.grid(row=0, column=0, sticky="nsew", padx=(8, 4), pady=8)
+        self._gantt_placeholder = tk.Label(
+            self.gantt_area,
+            text="Run a simulation, then press Play to animate the Gantt chart.",
+            font=FONT_MAIN, bg=COLORS["bg"], fg=COLORS["subtext"])
+        self._gantt_placeholder.pack(expand=True)
+
+        # Right — Ready Queue Panel
+        rqp = tk.Frame(top, bg=COLORS["sidebar"],
+                       highlightbackground=COLORS["border"], highlightthickness=1)
+        rqp.grid(row=0, column=1, sticky="nsew", padx=(0, 8), pady=8)
+
+        tk.Label(rqp, text="Ready Queue",
+                 font=FONT_BOLD, bg=COLORS["sidebar"],
+                 fg=COLORS["accent"]).pack(pady=(12, 2))
+        self._divider(rqp)
+
+        # Time display
+        tf = tk.Frame(rqp, bg=COLORS["sidebar"])
+        tf.pack(fill="x", padx=12, pady=(4, 2))
+        tk.Label(tf, text="Time:", font=FONT_BOLD,
+                 bg=COLORS["sidebar"], fg=COLORS["subtext"]).pack(side="left")
+        self.rq_time_var = tk.StringVar(value="—")
+        tk.Label(tf, textvariable=self.rq_time_var,
+                 font=("Consolas", 13, "bold"),
+                 bg=COLORS["sidebar"], fg=COLORS["warning"]).pack(side="right")
+
+        # CPU now
+        tk.Label(rqp, text="CPU running:",
+                 font=FONT_BOLD, bg=COLORS["sidebar"],
+                 fg=COLORS["subtext"]).pack(anchor="w", padx=14, pady=(6, 0))
+        self.rq_cpu_var = tk.StringVar(value="—")
+        self.rq_cpu_lbl = tk.Label(rqp, textvariable=self.rq_cpu_var,
+                                   font=("Segoe UI", 16, "bold"),
+                                   bg=COLORS["sidebar"], fg=COLORS["rq_run"])
+        self.rq_cpu_lbl.pack(pady=(2, 8))
+
+        self._divider(rqp)
+
+        # Waiting
+        tk.Label(rqp, text="Waiting (ready queue):",
+                 font=FONT_BOLD, bg=COLORS["sidebar"],
+                 fg=COLORS["subtext"]).pack(anchor="w", padx=14, pady=(4, 2))
+        self.rq_wait_frame = tk.Frame(rqp, bg=COLORS["sidebar"])
+        self.rq_wait_frame.pack(fill="x", padx=12)
+
+        self._divider(rqp)
+
+        # Completed
+        tk.Label(rqp, text="Completed:",
+                 font=FONT_BOLD, bg=COLORS["sidebar"],
+                 fg=COLORS["subtext"]).pack(anchor="w", padx=14, pady=(4, 2))
+        self.rq_done_frame = tk.Frame(rqp, bg=COLORS["sidebar"])
+        self.rq_done_frame.pack(fill="x", padx=12)
+
+        self._divider(rqp)
+
+        self.rq_progress_var = tk.StringVar(value="")
+        tk.Label(rqp, textvariable=self.rq_progress_var,
+                 font=FONT_SMALL, bg=COLORS["sidebar"],
+                 fg=COLORS["subtext"], wraplength=200).pack(padx=10, pady=6)
+
+        # ── Playback controls bar ─────────────────────────────────
+        ctrl = tk.Frame(self.tab_gantt, bg=COLORS["card"],
+                        highlightbackground=COLORS["border"],
+                        highlightthickness=1, height=56)
+        ctrl.pack(fill="x", padx=8, pady=(0, 8))
+        ctrl.pack_propagate(False)
+
+        # Step back
+        tk.Button(ctrl, text="<<", font=FONT_BOLD,
+                  bg=COLORS["card"], fg=COLORS["text"],
+                  relief="flat", padx=10, cursor="hand2",
+                  command=self._step_back).pack(side="left", padx=(14, 2), pady=10)
+
+        # Play / Pause
+        self.play_var = tk.StringVar(value="  Play  ")
+        self.btn_play = tk.Button(ctrl, textvariable=self.play_var,
+                                  font=("Segoe UI", 10, "bold"),
+                                  bg=COLORS["success"], fg="white",
+                                  relief="flat", padx=14, cursor="hand2",
+                                  command=self._toggle_play)
+        self.btn_play.pack(side="left", padx=4, pady=10)
+
+        # Step forward
+        tk.Button(ctrl, text=">>", font=FONT_BOLD,
+                  bg=COLORS["card"], fg=COLORS["text"],
+                  relief="flat", padx=10, cursor="hand2",
+                  command=self._step_fwd).pack(side="left", padx=2, pady=10)
+
+        # Reset
+        tk.Button(ctrl, text="Reset", font=FONT_BOLD,
+                  bg=COLORS["danger"], fg="white",
+                  relief="flat", padx=10, cursor="hand2",
+                  command=self._reset_anim).pack(side="left", padx=(10, 4), pady=10)
+
+        # Speed
+        tk.Label(ctrl, text="Speed:", font=FONT_BOLD,
+                 bg=COLORS["card"], fg=COLORS["subtext"]).pack(side="left", padx=(18, 4))
+        for sp in ["0.5x", "1x", "1.5x", "2x", "3x"]:
+            tk.Radiobutton(ctrl, text=sp, variable=self.speed_var, value=sp,
+                           font=FONT_SMALL, bg=COLORS["card"], fg=COLORS["text"],
+                           selectcolor=COLORS["bg"],
+                           activebackground=COLORS["card"],
+                           cursor="hand2",
+                           command=self._on_speed_change).pack(side="left", padx=3)
+
+        # Scrubber
+        self.scrubber_var = tk.IntVar(value=0)
+        self.scrubber = tk.Scale(ctrl, variable=self.scrubber_var,
+                                 from_=0, to=100, orient="horizontal",
+                                 bg=COLORS["card"], fg=COLORS["subtext"],
+                                 troughcolor=COLORS["border"],
+                                 highlightthickness=0, showvalue=False,
+                                 command=self._on_scrub)
+        self.scrubber.pack(side="left", fill="x", expand=True, padx=(14, 8))
+
+        # Tick label
+        self.tick_lbl = tk.Label(ctrl, text="t = 0", font=FONT_MONO,
+                                 bg=COLORS["card"], fg=COLORS["warning"], width=8)
+        self.tick_lbl.pack(side="left", padx=(0, 12))
+
+    # ══════════════════════════════════════════════════════════════
+    #  READY QUEUE PANEL UPDATE
+    # ══════════════════════════════════════════════════════════════
+
+    def _update_ready_queue(self, snap):
+        self.rq_time_var.set(f"t = {snap['t']}")
+
+        running = snap["running"]
+        color   = (self._color_map.get(running, COLORS["rq_run"])
+                   if running != "IDLE" else COLORS["idle"])
+        self.rq_cpu_var.set(running)
+        self.rq_cpu_lbl.config(fg=color)
+
+        # Waiting
+        for w in self.rq_wait_frame.winfo_children():
+            w.destroy()
+        rq = snap["ready_queue"]
+        if rq:
+            for i, pid in enumerate(rq):
+                c   = self._color_map.get(pid, COLORS["rq_wait"])
+                row = tk.Frame(self.rq_wait_frame, bg=COLORS["sidebar"])
+                row.pack(fill="x", pady=1)
+                tk.Label(row, text=f"[{i}]", font=FONT_SMALL,
+                         bg=COLORS["sidebar"], fg=COLORS["subtext"],
+                         width=3).pack(side="left")
+                tk.Label(row, text=f"  {pid}",
+                         font=("Segoe UI", 12, "bold"),
+                         bg=COLORS["sidebar"], fg=c).pack(side="left")
+        else:
+            tk.Label(self.rq_wait_frame, text="(empty)",
+                     font=FONT_SMALL, bg=COLORS["sidebar"],
+                     fg=COLORS["subtext"]).pack(anchor="w")
+
+        # Completed
+        for w in self.rq_done_frame.winfo_children():
+            w.destroy()
+        done = snap["completed"]
+        if done:
+            for pid in done:
+                tk.Label(self.rq_done_frame, text=f"  {pid}",
+                         font=FONT_SMALL, bg=COLORS["sidebar"],
+                         fg=COLORS["rq_done"]).pack(anchor="w")
+        else:
+            tk.Label(self.rq_done_frame, text="(none yet)",
+                     font=FONT_SMALL, bg=COLORS["sidebar"],
+                     fg=COLORS["subtext"]).pack(anchor="w")
+
+        total = self.engine.total_ticks
+        pct   = int(snap["t"] / max(total - 1, 1) * 100)
+        self.rq_progress_var.set(f"Tick {snap['t']} / {total - 1}  ({pct}%)")
+
+    # ══════════════════════════════════════════════════════════════
+    #  GANTT DRAWING
+    # ══════════════════════════════════════════════════════════════
+
+    def _setup_gantt_figure(self, timeline):
+        """Initialise the figure with ghost bars for all blocks."""
+        if self._gantt_canvas_w:
+            self._gantt_canvas_w.get_tk_widget().destroy()
+            self._gantt_canvas_w = None
+        self._gantt_placeholder.pack_forget()
+
+        total_time = max(b["end"] for b in timeline)
+        fig_w      = max(9, total_time * 0.42)
+        fig, ax    = plt.subplots(figsize=(fig_w, 3.4))
+        fig.patch.set_facecolor(COLORS["bg"])
+        ax.set_facecolor(COLORS["bg"])
+        ax.set_xlim(0, total_time)
+        ax.set_ylim(0, 1)
+        ax.set_xlabel("Time Units", color=COLORS["subtext"], fontsize=9)
+        ax.set_yticks([])
+        ax.tick_params(axis="x", colors=COLORS["subtext"], labelsize=8)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(COLORS["border"])
+
+        # Build colour map
+        pids = list(dict.fromkeys(b["pid"] for b in timeline if b["pid"] != "IDLE"))
+        self._color_map = {pid: PROCESS_COLORS[i % len(PROCESS_COLORS)]
+                           for i, pid in enumerate(pids)}
+        self._color_map["IDLE"] = COLORS["idle"]
+
+        # Draw ghost (all blocks dimmed)
+        for b in timeline:
+            ax.barh(0.3, b["end"] - b["start"], left=b["start"], height=0.4,
+                    color=self._color_map.get(b["pid"], "#555"),
+                    edgecolor=COLORS["border"], linewidth=0.5, alpha=0.12)
+
+        # Legend
+        patches = [mpatches.Patch(color=self._color_map[p], label=p) for p in pids]
+        patches.append(mpatches.Patch(color=COLORS["idle"], label="IDLE"))
+        ax.legend(handles=patches, loc="upper right",
+                  facecolor=COLORS["card"], edgecolor=COLORS["border"],
+                  labelcolor=COLORS["text"], fontsize=8, framealpha=0.9)
+
+        self._anim_ax       = ax
+        self._gantt_fig     = fig
+        self._timeline_data = timeline
+        self._total_time    = total_time
+
+        fig.tight_layout(pad=1.2)
+        canvas = FigureCanvasTkAgg(fig, master=self.gantt_area)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+        self._gantt_canvas_w = canvas
+
+    def _redraw_gantt_at_tick(self, tick_index):
+        """Repaint Gantt showing progress up to current_t."""
+        if not self._anim_ax or not self._gantt_fig:
+            return
+
+        snap      = self.engine.snapshots[tick_index]
+        current_t = snap["t"]
+        ax        = self._anim_ax
+        timeline  = self._timeline_data
+
+        ax.clear()
+        ax.set_facecolor(COLORS["bg"])
+        ax.set_xlim(0, self._total_time)
+        ax.set_ylim(0, 1)
+        ax.set_xlabel("Time Units", color=COLORS["subtext"], fontsize=9)
+        ax.set_yticks([])
+        ax.tick_params(axis="x", colors=COLORS["subtext"], labelsize=8)
+        for spine in ax.spines.values():
+            spine.set_edgecolor(COLORS["border"])
+
+        # Ghost layer
+        for b in timeline:
+            ax.barh(0.3, b["end"] - b["start"], left=b["start"], height=0.4,
+                    color=self._color_map.get(b["pid"], "#555"),
+                    edgecolor=COLORS["border"], linewidth=0.5, alpha=0.12)
+
+        # Lit blocks
+        for b in timeline:
+            s, e, pid = b["start"], b["end"], b["pid"]
+            c = self._color_map.get(pid, "#555")
+            if e <= current_t:
+                # Fully completed
+                ax.barh(0.3, e - s, left=s, height=0.4,
+                        color=c, edgecolor=COLORS["border"], linewidth=0.6)
+                if e - s >= max(self._total_time * 0.04, 1):
+                    ax.text((s + e) / 2, 0.3, pid,
+                            ha="center", va="center",
+                            fontsize=8, fontweight="bold", color="white", zorder=5)
+                ax.text(s, 0.04, str(s),
+                        ha="center", va="bottom", fontsize=7, color=COLORS["subtext"])
+            elif s < current_t:
+                # Partially running
+                partial = current_t - s
+                ax.barh(0.3, partial, left=s, height=0.4,
+                        color=c, edgecolor=COLORS["border"], linewidth=0.6)
+                if partial >= max(self._total_time * 0.03, 0.5):
+                    ax.text(s + partial / 2, 0.3, pid,
+                            ha="center", va="center",
+                            fontsize=8, fontweight="bold", color="white", zorder=5)
+                ax.text(s, 0.04, str(s),
+                        ha="center", va="bottom", fontsize=7, color=COLORS["subtext"])
+
+        # End tick
+        if current_t >= self._total_time:
+            ax.text(self._total_time, 0.04, str(self._total_time),
+                    ha="center", va="bottom", fontsize=7, color=COLORS["subtext"])
+
+        # Moving time cursor
+        ax.axvline(x=current_t, color="#ffffff", linewidth=1.8,
+                   alpha=0.85, zorder=10, linestyle="--")
+        offset = self._total_time * 0.006
+        ax.text(current_t + offset, 0.90,
+                f"t={current_t}", color=COLORS["warning"],
+                fontsize=8, va="top", zorder=11,
+                bbox=dict(boxstyle="round,pad=0.25",
+                          facecolor=COLORS["card"],
+                          edgecolor=COLORS["warning"],
+                          linewidth=0.8))
+
+        # Legend
+        pids    = list(dict.fromkeys(b["pid"] for b in timeline if b["pid"] != "IDLE"))
+        patches = [mpatches.Patch(color=self._color_map[p], label=p) for p in pids]
+        patches.append(mpatches.Patch(color=COLORS["idle"], label="IDLE"))
+        ax.legend(handles=patches, loc="upper right",
+                  facecolor=COLORS["card"], edgecolor=COLORS["border"],
+                  labelcolor=COLORS["text"], fontsize=8, framealpha=0.9)
+
+        ax.set_title(f"Gantt Chart  —  {self.last_result['algorithm']}",
+                     color=COLORS["text"], fontsize=10, fontweight="bold", pad=8)
+        self._gantt_fig.tight_layout(pad=1.2)
+        self._gantt_canvas_w.draw_idle()
+
+    # ══════════════════════════════════════════════════════════════
+    #  ANIMATION CALLBACKS
+    # ══════════════════════════════════════════════════════════════
+
+    def _on_tick(self, tick_index):
+        if not self.engine.snapshots:
+            return
+        snap = self.engine.snapshots[tick_index]
+        self._redraw_gantt_at_tick(tick_index)
+        self._update_ready_queue(snap)
+        self.scrubber_var.set(tick_index)
+        self.tick_lbl.config(text=f"t = {snap['t']}")
+
+    def _on_anim_finish(self):
+        self.play_var.set("  Play  ")
+        self.btn_play.config(bg=COLORS["success"])
+
+    def _toggle_play(self):
+        if self.engine.playing:
+            self.engine.pause()
+            self.play_var.set("  Play  ")
+            self.btn_play.config(bg=COLORS["success"])
+        else:
+            if self.engine.current >= self.engine.total_ticks:
+                self.engine.current = 0
+            self.play_var.set(" Pause ")
+            self.btn_play.config(bg=COLORS["warning"])
+            self.engine.play(self)
+
+    def _step_fwd(self):
+        self.engine.pause()
+        self.play_var.set("  Play  ")
+        self.btn_play.config(bg=COLORS["success"])
+        self.engine.step_forward()
+
+    def _step_back(self):
+        self.engine.pause()
+        self.play_var.set("  Play  ")
+        self.btn_play.config(bg=COLORS["success"])
+        self.engine.step_backward()
+
+    def _reset_anim(self):
+        self.engine.stop()
+        self.play_var.set("  Play  ")
+        self.btn_play.config(bg=COLORS["success"])
+        if self.last_result:
+            self.engine.jump_to(0)
+
+    def _on_scrub(self, val):
+        self.engine.pause()
+        self.play_var.set("  Play  ")
+        self.btn_play.config(bg=COLORS["success"])
+        try:
+            self.engine.jump_to(int(float(val)))
+        except Exception:
+            pass
+
+    def _on_speed_change(self):
+        self.engine.speed_key = self.speed_var.get()
+
     # ══════════════════════════════════════════════════════════════
     #  METRICS TAB
     # ══════════════════════════════════════════════════════════════
@@ -547,280 +998,7 @@ class CPUSchedulerApp(tk.Tk):
             tk.Label(card, text=value, font=("Segoe UI", 16, "bold"),
                      bg=COLORS["card"], fg=color).pack(pady=(4, 0))
 
-    # ══════════════════════════════════════════════════════════════
-    #  COMPARE TAB
-    # ══════════════════════════════════════════════════════════════
-
-    def _build_compare_tab(self):
-        self.compare_inner = tk.Frame(self.tab_compare, bg=COLORS["bg"])
-        self.compare_inner.pack(fill="both", expand=True)
-        tk.Label(self.compare_inner,
-                 text='Click "Compare All" in the toolbar to run all algorithms.',
-                 font=FONT_MAIN, bg=COLORS["bg"], fg=COLORS["subtext"]).pack(expand=True)
-
-    def _draw_comparison(self, results):
-        for w in self.compare_inner.winfo_children():
-            w.destroy()
-        labels = [r["algorithm"] for r in results]
-        awt    = [r["summary"]["avg_waiting_time"]    for r in results]
-        att    = [r["summary"]["avg_turnaround_time"] for r in results]
-        cpu    = [r["summary"]["cpu_utilization"]     for r in results]
-
-        fig, axes = plt.subplots(1, 3, figsize=(13, 4.5))
-        fig.patch.set_facecolor(COLORS["bg"])
-        short = [l.replace("Non-Preemptive", "NP").replace("Preemptive", "P")
-                  .replace("Round Robin", "RR").replace("Priority", "Pri")
-                 for l in labels]
-
-        for ax, values, title, color in [
-            (axes[0], awt, "Avg Waiting Time (units)",    COLORS["warning"]),
-            (axes[1], att, "Avg Turnaround Time (units)", COLORS["accent"]),
-            (axes[2], cpu, "CPU Utilization (%)",         COLORS["success"]),
-        ]:
-            ax.set_facecolor(COLORS["card"])
-            bars = ax.bar(short, values, color=color, alpha=0.85,
-                          edgecolor=COLORS["border"])
-            for bar, val in zip(bars, values):
-                ax.text(bar.get_x() + bar.get_width() / 2,
-                        bar.get_height() + max(values) * 0.02, str(val),
-                        ha="center", va="bottom", fontsize=8,
-                        color=COLORS["text"], fontweight="bold")
-            ax.set_title(title, color=COLORS["text"], fontsize=9, fontweight="bold")
-            ax.tick_params(axis="x", colors=COLORS["subtext"], labelsize=7, rotation=15)
-            ax.tick_params(axis="y", colors=COLORS["subtext"], labelsize=8)
-            for spine in ax.spines.values():
-                spine.set_edgecolor(COLORS["border"])
-            ax.set_ylim(0, max(values) * 1.2 if max(values) > 0 else 1)
-
-        best_idx = awt.index(min(awt))
-        list(axes[0].get_children())[best_idx].set_edgecolor(COLORS["success"])
-        list(axes[0].get_children())[best_idx].set_linewidth(2.5)
-
-        tk.Label(self.compare_inner, text="Algorithm Comparison — Same Workload",
-                 font=FONT_TITLE, bg=COLORS["bg"], fg=COLORS["accent"]).pack(pady=(10, 0))
-        tk.Label(self.compare_inner,
-                 text=f"Best: {results[best_idx]['algorithm']}  (lowest avg waiting time)",
-                 font=FONT_BOLD, bg=COLORS["bg"], fg=COLORS["success"]).pack(pady=(2, 6))
-
-        fig.tight_layout(pad=2)
-        canvas = FigureCanvasTkAgg(fig, master=self.compare_inner)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        plt.close(fig)
-
-        cols = ("Algorithm", "Avg WT", "Avg TAT", "Avg RT", "CPU Util%", "Throughput")
-        tree = self._make_treeview(self.compare_inner, cols, height=len(results))
-        for i, r in enumerate(results):
-            s   = r["summary"]
-            tag = "even" if i % 2 == 0 else "odd"
-            tree.insert("", "end", tag=tag, values=(
-                r["algorithm"], s["avg_waiting_time"],
-                s["avg_turnaround_time"], s["avg_response_time"],
-                f"{s['cpu_utilization']}%", s["throughput"],
-            ))
-
-    # ══════════════════════════════════════════════════════════════
-    #  PROCESS ROW MANAGEMENT
-    # ══════════════════════════════════════════════════════════════
-
-    def _add_row(self, pid="", at="0", bt="", pri="1"):
-        self.row_count += 1
-        default_pid = pid or f"P{self.row_count}"
-        pid_v = tk.StringVar(value=default_pid)
-        at_v  = tk.StringVar(value=at)
-        bt_v  = tk.StringVar(value=bt)
-        pri_v = tk.StringVar(value=pri)
-        row   = tk.Frame(self.row_frame,
-                         bg=COLORS["row_even"] if self.row_count % 2 == 0
-                         else COLORS["row_odd"])
-        row.pack(fill="x", pady=1)
-        for var, w, fg in [(pid_v,6,COLORS["accent"]),(at_v,7,COLORS["text"]),
-                            (bt_v,6,COLORS["text"]),(pri_v,8,COLORS["warning"])]:
-            tk.Entry(row, textvariable=var, width=w, font=FONT_MONO,
-                     bg=COLORS["card"], fg=fg, insertbackground=fg,
-                     relief="flat", justify="center").pack(side="left", padx=3, pady=4)
-        tk.Button(row, text="x", font=("Segoe UI", 8),
-                  bg=COLORS["danger"], fg="white", relief="flat", padx=4,
-                  cursor="hand2",
-                  command=lambda r=row, rv=(pid_v,at_v,bt_v,pri_v):
-                      self._delete_row(r, rv)).pack(side="left", padx=2)
-        self.process_rows.append((pid_v, at_v, bt_v, pri_v))
-        self._scroll_canvas.update_idletasks()
-        self._scroll_canvas.yview_moveto(1)
-
-    def _delete_row(self, rw, rv):
-        if rv in self.process_rows:
-            self.process_rows.remove(rv)
-        rw.destroy()
-
-    def _clear_rows(self):
-        for c in self.row_frame.winfo_children():
-            c.destroy()
-        self.process_rows.clear()
-        self.row_count = 0
-
-    def _load_sample_data(self):
-        for args in [("P1","0","8","3"),("P2","1","4","1"),
-                     ("P3","2","9","4"),("P4","3","5","2")]:
-            self._add_row(*args)
-
-    # ══════════════════════════════════════════════════════════════
-    #  HELPERS
-    # ══════════════════════════════════════════════════════════════
-
-    def _section(self, parent, text):
-        tk.Label(parent, text=text, font=FONT_H2,
-                 bg=COLORS["sidebar"], fg=COLORS["accent"]).pack(
-                     anchor="w", padx=14, pady=(12, 4))
-
-    def _divider(self, parent):
-        tk.Frame(parent, bg=COLORS["border"], height=1).pack(
-            fill="x", padx=10, pady=6)
-
-    def _make_treeview(self, parent, cols, height=8):
-        style = ttk.Style()
-        style.configure("Dark.Treeview", background=COLORS["card"],
-                        foreground=COLORS["text"], fieldbackground=COLORS["card"],
-                        rowheight=26, font=FONT_MONO)
-        style.configure("Dark.Treeview.Heading", background=COLORS["header_bg"],
-                        foreground=COLORS["subtext"], font=FONT_BOLD, relief="flat")
-        style.map("Dark.Treeview",
-                  background=[("selected", COLORS["accent"])],
-                  foreground=[("selected", "white")])
-        frame = tk.Frame(parent, bg=COLORS["bg"])
-        frame.pack(fill="both", expand=True, padx=10, pady=10)
-        vsb  = ttk.Scrollbar(frame, orient="vertical")
-        hsb  = ttk.Scrollbar(frame, orient="horizontal")
-        tree = ttk.Treeview(frame, columns=cols, show="headings",
-                            style="Dark.Treeview", height=height,
-                            yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        vsb.config(command=tree.yview)
-        hsb.config(command=tree.xview)
-        vsb.pack(side="right", fill="y")
-        hsb.pack(side="bottom", fill="x")
-        tree.pack(fill="both", expand=True)
-        for col in cols:
-            tree.heading(col, text=col)
-            tree.column(col, anchor="center", width=max(80, len(col) * 9))
-        tree.tag_configure("even", background=COLORS["row_even"])
-        tree.tag_configure("odd",  background=COLORS["row_odd"])
-        return tree
-
-    def _on_algo_change(self):
-        state = "normal" if self.algo_var.get() == "RR" else "disabled"
-        self.quantum_spin.config(state=state)
-
-    # ══════════════════════════════════════════════════════════════
-    #  CORE ACTIONS
-    # ══════════════════════════════════════════════════════════════
-
-    def _collect_processes(self):
-        processes = []
-        for pid_v, at_v, bt_v, pri_v in self.process_rows:
-            pid = pid_v.get().strip()
-            if not pid:
-                continue
-            try:
-                processes.append(Process(pid, int(at_v.get()),
-                                         int(bt_v.get()), int(pri_v.get())))
-            except ValueError:
-                messagebox.showerror("Invalid Input",
-                    f"Process '{pid}': All fields must be integers.")
-                return None
-        return processes
-
-    def _run_simulation(self):
-        processes = self._collect_processes()
-        if processes is None:
-            return
-        err = validate_processes(processes)
-        if err:
-            messagebox.showerror("Validation Error", err)
-            return
-
-        algo = self.algo_var.get()
-        try:
-            if   algo == "FCFS"  : result = fcfs(processes)
-            elif algo == "SJF_NP": result = sjf(processes, preemptive=False)
-            elif algo == "SJF_P" : result = sjf(processes, preemptive=True)
-            elif algo == "RR"    : result = round_robin(processes, self.quantum_var.get())
-            elif algo == "PRI_NP": result = priority_scheduling(processes, preemptive=False)
-            elif algo == "PRI_P" : result = priority_scheduling(processes, preemptive=True)
-            else:
-                messagebox.showerror("Error", "Unknown algorithm."); return
-        except Exception as ex:
-            messagebox.showerror("Simulation Error", str(ex)); return
-
-        self.last_result = result
-        self.processes   = processes
-
-        if not MATPLOTLIB_OK:
-            messagebox.showwarning("matplotlib missing",
-                "Install it with:  pip install matplotlib")
-        else:
-            snapshots = build_tick_snapshots(processes, result["timeline"])
-            self.engine.load(snapshots)
-            self.scrubber.config(from_=0, to=max(len(snapshots) - 1, 1))
-            self.scrubber_var.set(0)
-            self.tick_lbl.config(text="t = 0")
-            self._setup_gantt_figure(result["timeline"])
-            if snapshots:
-                self._on_tick(0)
-
-        self._update_metrics(result["metrics"])
-        self._update_summary(result)
-
-    def _compare_all(self):
-        processes = self._collect_processes()
-        if processes is None:
-            return
-        err = validate_processes(processes)
-        if err:
-            messagebox.showerror("Validation Error", err); return
-        if not MATPLOTLIB_OK:
-            messagebox.showwarning("matplotlib missing",
-                "pip install matplotlib"); return
-        q = self.quantum_var.get()
-        results = [
-            fcfs(processes),
-            sjf(processes, preemptive=False),
-            sjf(processes, preemptive=True),
-            round_robin(processes, q),
-            priority_scheduling(processes, preemptive=False),
-            priority_scheduling(processes, preemptive=True),
-        ]
-        self._draw_comparison(results)
-
-    def _export_csv(self):
-        if not self.last_result:
-            messagebox.showinfo("No Data", "Run a simulation first.")
-            return
-        path = filedialog.asksaveasfilename(
-            defaultextension=".csv",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
-            title="Save Metrics as CSV")
-        if not path:
-            return
-        metrics = self.last_result["metrics"]
-        summary = self.last_result["summary"]
-        with open(path, "w", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(["CPU Scheduler Simulator — Export"])
-            w.writerow(["Algorithm", self.last_result["algorithm"]])
-            w.writerow([])
-            w.writerow(["PID", "Arrival", "Burst", "Priority",
-                         "Completion", "Turnaround", "Waiting", "Response"])
-            for m in metrics:
-                w.writerow([m["pid"], m["arrival_time"], m["burst_time"],
-                             m["priority"], m["completion_time"],
-                             m["turnaround_time"], m["waiting_time"],
-                             m["response_time"]])
-            w.writerow([])
-            w.writerow(["Summary"])
-            for k, v in summary.items():
-                w.writerow([k.replace("_", " ").title(), v])
-        messagebox.showinfo("Exported", f"Saved to:\n{path}")
-
+    
 
 # ══════════════════════════════════════════════════════════════════
 #  ENTRY POINT
