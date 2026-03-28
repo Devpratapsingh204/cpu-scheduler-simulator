@@ -194,3 +194,71 @@ def sjf(processes, preemptive=False):
             "metrics": m, "summary": compute_summary(m, timeline)}
 
 
+# ── Round Robin ───────────────────────────────────────────────────
+def round_robin(processes, quantum=2):
+    procs     = sorted(_prepare(processes), key=lambda p: (p.arrival_time, p.pid))
+    timeline, t, ready, visited = [], 0, [], set()
+    remaining = procs[:]
+    for p in remaining:
+        if p.arrival_time <= t:
+            ready.append(p); visited.add(p.pid)
+    while ready or remaining:
+        if not ready:
+            unvisited = [p for p in remaining if p.pid not in visited]
+            if not unvisited: break
+            nxt = min(p.arrival_time for p in unvisited)
+            _add_block(timeline, "IDLE", t, nxt); t = nxt
+            for p in remaining:
+                if p.arrival_time <= t and p.pid not in visited:
+                    ready.append(p); visited.add(p.pid)
+            continue
+        cur = ready.pop(0)
+        run = min(quantum, cur.remaining_time)
+        _add_block(timeline, cur.pid, t, t + run)
+        cur.remaining_time -= run; t += run
+        for p in remaining:
+            if p.arrival_time <= t and p.pid not in visited:
+                ready.append(p); visited.add(p.pid)
+        if cur.remaining_time > 0:
+            ready.append(cur)
+        else:
+            remaining.remove(cur)
+    m = compute_metrics(processes, timeline)
+    return {"algorithm": f"Round Robin (q={quantum})", "timeline": timeline,
+            "metrics": m, "summary": compute_summary(m, timeline)}
+
+
+# ── Priority ──────────────────────────────────────────────────────
+def priority_scheduling(processes, preemptive=False):
+    procs, timeline, t = _prepare(processes), [], 0
+    remaining = procs[:]
+    if not preemptive:
+        while remaining:
+            arrived = [p for p in remaining if p.arrival_time <= t]
+            if not arrived:
+                nxt = min(p.arrival_time for p in remaining)
+                _add_block(timeline, "IDLE", t, nxt); t = nxt; continue
+            ch = min(arrived, key=lambda p: (p.priority, p.arrival_time, p.pid))
+            remaining.remove(ch)
+            _add_block(timeline, ch.pid, t, t + ch.burst_time)
+            t += ch.burst_time
+    else:
+        while remaining:
+            arrived = [p for p in remaining if p.arrival_time <= t]
+            if not arrived:
+                nxt = min(p.arrival_time for p in remaining)
+                _add_block(timeline, "IDLE", t, nxt); t = nxt; continue
+            ch  = min(arrived, key=lambda p: (p.priority, p.arrival_time, p.pid))
+            fut = [p.arrival_time for p in remaining if p.arrival_time > t]
+            nxt = min([t + ch.remaining_time] + ([min(fut)] if fut else []))
+            run = nxt - t
+            _add_block(timeline, ch.pid, t, nxt)
+            ch.remaining_time -= run; t = nxt
+            if ch.remaining_time == 0:
+                remaining.remove(ch)
+    label = "Priority Preemptive" if preemptive else "Priority Non-Preemptive"
+    m = compute_metrics(processes, timeline)
+    return {"algorithm": label, "timeline": timeline,
+            "metrics": m, "summary": compute_summary(m, timeline)}
+
+
