@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CPU Scheduler Simulator | OS Lab</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+
+    <!-- ══════════════════════════════════════
+         HEADER
+    ══════════════════════════════════════ -->
+    <header class="site-header">
+        <div class="header-logo">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="4" y="4" width="16" height="16" rx="2"/>
+                <path d="M9 9h6M9 12h6M9 15h4"/>
+                <circle cx="17" cy="15" r="1.5" fill="currentColor" stroke="none"/>
+            </svg>
+        </div>
+        <div class="header-text">
+            <h1>CPU Scheduler Simulator</h1>
+            <div class="header-meta">
+                <span class="subtitle">OPERATING SYSTEMS LAB</span>
+                <span class="header-tag blue">v2.0</span>
+                <span class="header-tag green">6 Algorithms</span>
+            </div>
+        </div>
+        <div class="badge">
+            <span class="badge-dot"></span>
+            LIVE SIM
+        </div>
+    </header>
+
+    <!-- ══════════════════════════════════════
+         MAIN GRID
+    ══════════════════════════════════════ -->
+    <div class="grid-2col">
+
+        <!-- ════════════════════════════════════════
+             LEFT COLUMN — CONFIGURATION
+        ════════════════════════════════════════ -->
+        <div class="left-col">
+
+            <!-- Process Input Panel -->
+            <div class="panel reveal" style="margin-bottom:22px">
+                <div class="panel-header">
+                    <div class="panel-icon">📋</div>
+                    <h2>Process Table</h2>
+                    <span class="panel-badge" id="process-count-badge">0 processes</span>
+                </div>
+                <div class="panel-body">
+
+                    <div class="process-table-wrapper">
+                        <table id="process-table">
+                            <thead>
+                                <tr>
+                                    <th>PID</th>
+                                    <th>Arrival</th>
+                                    <th>Burst</th>
+                                    <th>Priority</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- rows injected by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="btn-group" style="margin-top:14px">
+                        <button id="add-row-btn" class="btn btn-secondary btn-sm">
+                            + Add Process
+                        </button>
+                        <button id="sample-btn" class="btn btn-secondary btn-sm">
+                            ◈ Load Sample
+                        </button>
+                    </div>
+
+                    <div class="divider"></div>
+
+                    <p style="font-size:10px;color:var(--text-muted);font-family:var(--font-mono);line-height:2">
+                        <strong style="color:var(--text-secondary)">Priority</strong> — Lower = Higher priority (1 = max)<br>
+                        <strong style="color:var(--text-secondary)">Burst Time</strong> — Must be ≥ 1 time unit
+                    </p>
+                </div>
+            </div>
+
+            <!-- Algorithm Selection Panel -->
+            <div class="panel reveal">
+                <div class="panel-header">
+                    <div class="panel-icon">⚙</div>
+                    <h2>Algorithm &amp; Config</h2>
+                </div>
+                <div class="panel-body">
+
+                    <div class="form-section">
+                        <label>Select Scheduling Algorithm</label>
+                        <div class="algo-grid">
+
+                            <div class="algo-option">
+                                <input type="radio" name="algo" id="algo-fcfs" value="FCFS" checked>
+                                <label for="algo-fcfs">
+                                    <span class="dot"></span>FCFS
+                                </label>
+                            </div>
+
+                            <div class="algo-option">
+                                <input type="radio" name="algo" id="algo-sjf" value="SJF_NP">
+                                <label for="algo-sjf">
+                                    <span class="dot"></span>SJF Non-Preemptive
+                                </label>
+                            </div>
+
+                            <div class="algo-option">
+                                <input type="radio" name="algo" id="algo-srtf" value="SRTF">
+                                <label for="algo-srtf">
+                                    <span class="dot"></span>SRTF Preemptive
+                                </label>
+                            </div>
+
+                            <div class="algo-option">
+                                <input type="radio" name="algo" id="algo-rr" value="RR">
+                                <label for="algo-rr">
+                                    <span class="dot"></span>Round Robin
+                                </label>
+                            </div>
+
+                            <div class="algo-option">
+                                <input type="radio" name="algo" id="algo-pri-np" value="PRI_NP">
+                                <label for="algo-pri-np">
+                                    <span class="dot"></span>Priority Non-Preemptive
+                                </label>
+                            </div>
+
+                            <div class="algo-option">
+                                <input type="radio" name="algo" id="algo-pri-p" value="PRI_P">
+                                <label for="algo-pri-p">
+                                    <span class="dot"></span>Priority Preemptive
+                                </label>
+                            </div>
+
+                        </div>
+                    </div>
+
+                    <!-- Quantum -->
+                    <div class="quantum-row" id="quantum-row" style="opacity:0.4">
+                        <span class="field-label">Time Quantum (RR)</span>
+                        <input type="number" id="quantum" value="2" min="1" max="20" disabled>
+                    </div>
+
+                    <!-- Run Button -->
+                    <button id="run-btn" class="btn btn-primary">
+                        <span class="btn-icon">▶</span>
+                        <span class="btn-text">Run Simulation</span>
+                    </button>
+
+                    <div class="divider"></div>
+
+                    <button id="compare-btn" class="btn btn-success" style="width:100%">
+                        ⚡ &nbsp; Compare All Algorithms
+                    </button>
+
+                </div>
+            </div>
+
+        </div><!-- /left-col -->
+
+
+        <!-- ════════════════════════════════════════
+             RIGHT COLUMN — RESULTS
+        ════════════════════════════════════════ -->
+        <div class="right-col">
+
+            <!-- Results section -->
+            <div id="results-area" style="display:none">
+
+                <!-- Results Header Bar -->
+                <div class="results-header">
+                    <span class="results-title">Simulation Output</span>
+                    <div id="algo-label"></div>
+                    <span class="results-time" id="result-time"></span>
+                </div>
+
+                <!-- Gantt Chart -->
+                <div class="panel reveal" style="margin-bottom:20px">
+                    <div class="panel-header">
+                        <div class="panel-icon">▦</div>
+                        <h2>Gantt Chart</h2>
+                        <span class="panel-badge" id="gantt-time-badge">Timeline</span>
+                    </div>
+                    <div class="panel-body">
+                        <div class="gantt-container">
+                            <div id="gantt-output"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Metrics Table -->
+                <div class="panel reveal" style="margin-bottom:20px">
+                    <div class="panel-header">
+                        <div class="panel-icon">📈</div>
+                        <h2>Process Metrics</h2>
+                    </div>
+                    <div class="panel-body" style="padding:14px">
+                        <div id="metrics-output"></div>
+                    </div>
+                </div>
+
+                <!-- Summary Cards -->
+                <div class="panel reveal" style="margin-bottom:20px">
+                    <div class="panel-header">
+                        <div class="panel-icon">◉</div>
+                        <h2>Summary Statistics</h2>
+                    </div>
+                    <div class="panel-body">
+                        <div id="summary-output"></div>
+                    </div>
+                </div>
+
+            </div><!-- /results-area -->
+
+            <!-- Default empty state -->
+            <div id="default-empty" class="panel">
+                <div class="panel-body">
+                    <div class="empty-state">
+                        <div class="empty-icon">⚙️</div>
+                        <p>Configure your processes and select an algorithm</p>
+                        <p class="empty-prompt">▶ Run Simulation to begin</p>
+                        <p style="margin-top:14px;max-width:340px;text-align:center">
+                            Supports FCFS · SJF · SRTF · Round Robin<br>
+                            Priority Non-Preemptive · Priority Preemptive
+                        </p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Comparison Table -->
+            <div id="compare-section" class="panel reveal" style="display:none;margin-top:22px">
+                <div class="panel-header">
+                    <div class="panel-icon">🏆</div>
+                    <h2>Algorithm Comparison</h2>
+                    <span class="panel-badge">All 6 Algorithms</span>
+                </div>
+                <div class="panel-body" style="padding:14px">
+                    <div id="compare-output"></div>
+                </div>
+            </div>
+
+        </div><!-- /right-col -->
+
+    </div><!-- /grid-2col -->
+
+    <!-- ── ALGORITHM REFERENCE ── -->
+    <div class="panel reveal" style="margin-top:32px">
+        <div class="panel-header">
+            <div class="panel-icon">📚</div>
+            <h2>Algorithm Reference</h2>
+        </div>
+        <div class="panel-body">
+            <div class="algo-ref-grid">
+
+                <div class="algo-ref-card c-blue">
+                    <div class="algo-ref-name">FCFS</div>
+                    <div class="algo-ref-desc">First Come First Served. Non-preemptive. Processes run in arrival order. Simple but may cause the convoy effect with varied burst times.</div>
+                    <span class="algo-ref-tag" style="color:var(--accent);border-color:var(--accent);background:var(--accent-glow)">Non-Preemptive</span>
+                </div>
+
+                <div class="algo-ref-card c-green">
+                    <div class="algo-ref-name">SJF Non-Preemptive</div>
+                    <div class="algo-ref-desc">Shortest Job First. Selects the process with the smallest burst time from the ready queue. Optimal average waiting time.</div>
+                    <span class="algo-ref-tag" style="color:var(--green);border-color:var(--green);background:var(--green-glow)">Non-Preemptive</span>
+                </div>
+
+                <div class="algo-ref-card c-purple">
+                    <div class="algo-ref-name">SRTF</div>
+                    <div class="algo-ref-desc">Shortest Remaining Time First. Preemptive version of SJF. Theoretically optimal for average waiting time. Higher context-switch overhead.</div>
+                    <span class="algo-ref-tag" style="color:var(--purple);border-color:var(--purple);background:var(--purple-glow)">Preemptive</span>
+                </div>
+
+                <div class="algo-ref-card c-amber">
+                    <div class="algo-ref-name">Round Robin</div>
+                    <div class="algo-ref-desc">Each process receives a fixed time quantum in cyclic order. Fair allocation. Higher quantum converges to FCFS behavior.</div>
+                    <span class="algo-ref-tag" style="color:var(--amber);border-color:var(--amber);background:var(--amber-glow)">Preemptive · Time-sliced</span>
+                </div>
+
+                <div class="algo-ref-card c-red">
+                    <div class="algo-ref-name">Priority Non-Preemptive</div>
+                    <div class="algo-ref-desc">Highest priority (lowest number) runs to completion first. Can cause starvation of low priority processes without aging mechanisms.</div>
+                    <span class="algo-ref-tag" style="color:var(--red);border-color:var(--red);background:var(--red-glow)">Non-Preemptive</span>
+                </div>
+
+                <div class="algo-ref-card c-cyan">
+                    <div class="algo-ref-name">Priority Preemptive</div>
+                    <div class="algo-ref-desc">Running process is preempted when a higher-priority process arrives. More responsive for urgent tasks. Starvation risk without aging.</div>
+                    <span class="algo-ref-tag" style="color:var(--cyan);border-color:var(--cyan);background:var(--cyan-glow)">Preemptive</span>
+                </div>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- ── FOOTER ── -->
+    <footer class="site-footer">
+        <div class="footer-brand">
+            <span class="footer-dot"></span>
+            <span>CPU Scheduler Simulator &nbsp;·&nbsp; Operating Systems Lab</span>
+        </div>
+        <div class="footer-links">
+            <span>HTML / CSS / JS</span>
+            <span style="color:var(--border-bright)">|</span>
+            <span>6 Scheduling Algorithms</span>
+            <span style="color:var(--border-bright)">|</span>
+            <span>v2.0</span>
+        </div>
+    </footer>
+
+</div><!-- /app -->
+
+<!-- Toast -->
+<div id="toast" class="toast"></div>
+
+<!-- Pulse animation keyframe (kept from original) -->
+<style>
+/* Hide default empty when results are shown */
+#results-area[style*="display: block"] ~ #default-empty,
+#results-area[style*="display:block"] ~ #default-empty {
+    display: none !important;
+}
+</style>
+
+<!-- Watch for results to hide empty state -->
+<script>
+const resultsArea  = document.getElementById('results-area');
+const defaultEmpty = document.getElementById('default-empty');
+
+const observer = new MutationObserver(() => {
+    if (resultsArea.style.display !== 'none') {
+        defaultEmpty.style.display = 'none';
+    }
+});
+observer.observe(resultsArea, { attributes: true, attributeFilter: ['style'] });
+
+/* Scroll reveal */
+const revealObserver = new IntersectionObserver((entries) => {
+    entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
+}, { threshold: 0.1 });
+
+document.querySelectorAll('.reveal').forEach(el => revealObserver.observe(el));
+</script>
+
+<script src="script.js"></script>
+</body>
+</html>
