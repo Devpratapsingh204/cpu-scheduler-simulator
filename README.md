@@ -14,6 +14,9 @@ A complete simulation tool for CPU scheduling algorithms with visualization.
 - Python
 - Tkinter
 - Matplotlib
+- HTML
+- CSS
+- JS(JavaScript)
 
 ## How to Run
 ```bash
